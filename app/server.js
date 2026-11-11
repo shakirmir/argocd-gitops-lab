@@ -3,7 +3,7 @@ const express = require("express");
 const app = express();
 
 app.get("/", (req, res) => {
-  res.send("Hello! GitHub Actions + Argo CD + kind deployment successful.");
+  res.send("I have deployed app using Argo CD local setup.");
 });
 
 app.get("/health", (req, res) => {
