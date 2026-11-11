@@ -10,35 +10,74 @@ on:
       - 'Dockerfile'
       - '.github/workflows/ci-cd.yaml'
 
+  workflow_dispatch:
+
 permissions:
   contents: write
   packages: write
 
 jobs:
   build:
+    name: Build and Deploy Application
     runs-on: ubuntu-latest
 
     steps:
+
+      # 1. Checkout source code
       - name: Checkout source
         uses: actions/checkout@v4
 
+      # 2. Verify GitHub workspace
+      - name: Debug GitHub workspace
+        run: |
+          echo "Current directory:"
+          pwd
+
+          echo "GitHub workspace:"
+          echo "$GITHUB_WORKSPACE"
+
+          echo "Current commit:"
+          git rev-parse HEAD
+
+          echo "Current branch:"
+          git branch --show-current
+
+          echo "Repository files:"
+          ls -la
+
+          echo "Kubernetes directory:"
+          ls -la k8s/ || true
+
+          echo "Searching deployment manifest:"
+          find . -name deployment.yaml
+
+          if [ ! -f "$GITHUB_WORKSPACE/k8s/deployment.yaml" ]; then
+            echo "ERROR: k8s/deployment.yaml not found!"
+            exit 1
+          fi
+
+      # 3. Setup Node.js
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '22'
 
+      # 4. Install dependencies
       - name: Install dependencies
         working-directory: app
         run: npm install
 
+      # 5. Run application tests
       - name: Test application
         working-directory: app
         run: npm test --if-present
 
+      # 6. Set lowercase Docker image name
       - name: Set lowercase image name
         run: |
-          echo "IMAGE_NAME=ghcr.io/${GITHUB_REPOSITORY,,}" >> $GITHUB_ENV
+          echo "IMAGE_NAME=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_ENV"
 
+      # 7. Login to GitHub Container Registry
       - name: Login to GHCR
         uses: docker/login-action@v3
         with:
@@ -46,6 +85,7 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # 8. Build and push Docker image
       - name: Build and push image
         uses: docker/build-push-action@v6
         with:
@@ -53,14 +93,70 @@ jobs:
           push: true
           tags: ${{ env.IMAGE_NAME }}:${{ github.sha }}
 
+      # 9. Update Kubernetes deployment image
       - name: Update Kubernetes image tag
         run: |
-          sed -i "s|image: .*|image: ${{ env.IMAGE_NAME }}:${{ github.sha }}|" k8s/deployment.yaml
+          DEPLOYMENT_FILE="$GITHUB_WORKSPACE/k8s/deployment.yaml"
 
+          if [ ! -f "$DEPLOYMENT_FILE" ]; then
+            echo "ERROR: Deployment manifest not found"
+            exit 1
+          fi
+
+          echo "Updating Kubernetes image..."
+
+          python - <<'PY'
+          from pathlib import Path
+          import os
+          import re
+
+          path = Path(os.environ["GITHUB_WORKSPACE"]) / "k8s/deployment.yaml"
+
+          image = os.environ["IMAGE_NAME"] + ":" + os.environ["GITHUB_SHA"]
+
+          content = path.read_text()
+
+          updated, count = re.subn(
+              r"(?m)^(\s*image:\s*).+$",
+              lambda match: match.group(1) + image,
+              content,
+              count=1
+          )
+
+          if count != 1:
+              raise RuntimeError("Could not find an image field in deployment.yaml")
+
+          path.write_text(updated)
+
+          print(f"Updated Kubernetes image: {image}")
+          PY
+
+          echo "Updated deployment manifest:"
+          cat "$DEPLOYMENT_FILE"
+
+      # 10. Commit and push updated manifest
       - name: Commit updated manifest
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
           git add k8s/deployment.yaml
-          git commit -m "Update application image to ${{ github.sha }}" || echo "No changes"
-          git push
+
+          if ! git diff --cached --quiet; then
+            git commit -m "Update application image to ${GITHUB_SHA}"
+            git push origin "HEAD:${GITHUB_REF_NAME}"
+          else
+            echo "No manifest changes to commit"
+          fi
+
+      # 11. Deployment pipeline summary
+      - name: Pipeline summary
+        run: |
+          echo "================================="
+          echo "CI Pipeline Completed"
+          echo "================================="
+          echo "Repository: $GITHUB_REPOSITORY"
+          echo "Branch: $GITHUB_REF_NAME"
+          echo "Image: ${IMAGE_NAME}:${GITHUB_SHA}"
+          echo "Kubernetes manifest: k8s/deployment.yaml"
+          echo "================================="
