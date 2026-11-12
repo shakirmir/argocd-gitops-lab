@@ -3,7 +3,7 @@ const express = require("express");
 const app = express();
 
 app.get("/", (req, res) => {
-  res.send("I have deployed app using Argo CD local setup.");
+  res.send("Today completed Argo CD setup locally.");
 });
 
 app.get("/health", (req, res) => {
