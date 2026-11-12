@@ -19,6 +19,6 @@ spec:
     spec:
       containers:
         - name: demo-app
-          image: ghcr.io/shakirmir/argocd-gitops-lab:4b010a790f79ebdbe6fe2b7d1fac75cbfe2408b6
+          image: ghcr.io/shakirmir/argocd-gitops-lab:f14d9f22df1105c966c8098f78d13c4773841c82
           ports:
             - containerPort: 3000
